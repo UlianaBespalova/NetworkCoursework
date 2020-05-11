@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -100,6 +100,14 @@ namespace ComForm
 
         public const byte STARTBYTE = 0xFF;
 
+        const int HeaderLenght = 2;
+        const int fileTypeLenght = 1;
+        const int sizeLenght = 10;
+        const int NumOfFrameLenght = 7;
+
+        const int InfoLen = HeaderLenght + fileTypeLenght + sizeLenght + NumOfFrameLenght + NumOfFrameLenght;
+
+
         public enum FrameType : byte
         {
             ACK,
@@ -112,22 +120,20 @@ namespace ComForm
 
 
         public void WriteData(string input, FrameType type)
-            //пока считаем, что input строка символов
         {
             byte[] Header = { STARTBYTE, (byte)type };
+
+            byte[] fileId = { 0 };
+            byte[] size;
+            byte[] NumOfFrames;
+            byte[] FrameNumber;
+  
             byte[] BufferToSend;
             byte[] Telegram;
 
-            //Я добавил:
-            //byte[] Header = { STARTBYTE, receiver, (byte)type, sender };
-            //byte[] BufferToSend;
-            byte[] spd;
-            byte[] size;
             byte[] ByteToEncode;
             byte[] ByteEncoded;
-            byte[] NumOfFrames;
-            byte[] fileId = { 0 };
-            int i;
+
 
             switch (type)
             {
@@ -153,52 +159,49 @@ namespace ComForm
                     #region FILE
                     if (IsConnected())
                     {
-
-                        
                         ByteToEncode = File.ReadAllBytes(@input);
-                        size = new byte[10];
-                        //MessageBox.Show(((double)ByteToEncode.Length / 1048576).ToString());
-                        size = Encoding.Unicode.GetBytes(((double)ByteToEncode.Length / 1024).ToString()); //1048576 байт = 1 Мбайт
-                        //size = Encoding.Default.GetBytes((input.Length).ToString());
-                        ByteEncoded = new byte[ByteToEncode.Length * 2];
-                        i = 0;
+
+                        size = new byte[sizeLenght];
+                        size = Encoding.Default.GetBytes(((double)ByteToEncode.Length).ToString()); //нужны байты
+
+                        NumOfFrames = new byte[NumOfFrameLenght];
+                        FrameNumber = new byte[NumOfFrameLenght];
 
                         string typeFile = @input.Split('.')[1];
                         fileId[0] = TypeFile_to_IdFile(typeFile);
 
-                        Display.AppendText("Длина ByteToEncode:" + ByteToEncode.Length + "\n");
-                        foreach (byte item in ByteToEncode)
+
+                        ByteEncoded = new byte[ByteToEncode.Length * 2];
+                        for (int i = 0; i < ByteToEncode.Length; i++)
                         {
                             Hamming.HammingEncode74(ByteToEncode[i]).CopyTo(ByteEncoded, i * 2);
-                            i++;
-                            //Display.AppendText(i / ByteToEncode.Length * 100 + ", ");
-                           
-
-                            //loading.progressBar1.Increment(i / ByteToEncode.Length * 100);
                         }
-                        //double parts;
 
-                        //parts = (int)Math.Ceiling((double)ByteEncoded.Length / (double)(Port.WriteBufferSize - Header.Length - fileId.Length - 10));
-                        //NumOfFrames = Encoding.Unicode.GetBytes((parts).ToString());
-                        if (Header.Length + fileId.Length + ByteEncoded.Length + 8 < Port.WriteBufferSize)
+                        if (ByteEncoded.Length + InfoLen < Port.WriteBufferSize)
                         {
-                            BufferToSend = new byte[Header.Length + fileId.Length + 10 + ByteEncoded.Length];//!
+                            BufferToSend = new byte[InfoLen + ByteEncoded.Length];
                             Header.CopyTo(BufferToSend, 0);
                             fileId.CopyTo(BufferToSend, Header.Length);
                             size.CopyTo(BufferToSend, Header.Length + fileId.Length);
-                            //NumOfFrames.CopyTo(BufferToSend, Header.Length + fileId.Length + size.Length);
-                            ByteEncoded.CopyTo(BufferToSend, Header.Length + fileId.Length + 10 /*+ NumOfFrames.Length*/);//!
+
+                            NumOfFrames = Encoding.Default.GetBytes(1.ToString());
+                            NumOfFrames.CopyTo(BufferToSend, Header.Length + fileId.Length + sizeLenght);
+
+                            FrameNumber = Encoding.Default.GetBytes(1.ToString());
+                            FrameNumber.CopyTo(BufferToSend, Header.Length + fileId.Length + sizeLenght + NumOfFrameLenght);
+
+
+                            ByteEncoded.CopyTo(BufferToSend, InfoLen);
                             bool flag = false;
                             while (!flag)
                             {
 
-
-                                //Application.DoEvents();
                                 if (MessageBox.Show("Send?", "Test", MessageBoxButtons.YesNo) == DialogResult.Yes)
                                 {
 
                                     flag = true;
                                     Port.Write(BufferToSend, 0, BufferToSend.Length);
+
                                     //loading.Hide();
                                     MessageBox.Show("Готово!");
                                     //loading.progressBar1.Value = 0;
@@ -217,42 +220,47 @@ namespace ComForm
                         }
                         else
                         {
-                            double parts;
                             int EncodedByteIndex;
                             int Part_ByteEncodedIndex;
-                            parts = (double)ByteEncoded.Length / (double)(Port.WriteBufferSize - Header.Length - fileId.Length - 10);
-                            MessageBox.Show(Port.WriteBufferSize.ToString() + " " + parts.ToString() + ((int)Math.Ceiling(parts)).ToString());
-                            for (i = 0; i <= (int)Math.Ceiling(parts); i++)
+                            
+                            int parts = (int)Math.Ceiling((double)ByteEncoded.Length / (double)(Port.WriteBufferSize - InfoLen));
+                            NumOfFrames = Encoding.Default.GetBytes(parts.ToString());
+
+                            for (int i = 0; i < parts; i++)
                             {
-                                BufferToSend = new byte[Port.WriteBufferSize];//!
+                                EncodedByteIndex = i * (Port.WriteBufferSize - InfoLen);
+                                Part_ByteEncodedIndex = (Port.WriteBufferSize - InfoLen);
+
+                                byte[] Part_ByteEncoded = new byte[Part_ByteEncodedIndex];
+
+                                int Part_Len = 0;
+                                if (((ByteEncoded.Length - EncodedByteIndex) >= Part_ByteEncodedIndex))
+                                {
+                                    Part_Len = Part_ByteEncodedIndex;
+                                }
+
+                                else if (ByteEncoded.Length - EncodedByteIndex > 0)
+                                {
+                                    Part_Len = ByteEncoded.Length - i * (Port.WriteBufferSize - InfoLen);
+                                }
+
+
+                                BufferToSend = new byte[Port.WriteBufferSize];
+
                                 Header.CopyTo(BufferToSend, 0);
                                 fileId.CopyTo(BufferToSend, Header.Length);
                                 size.CopyTo(BufferToSend, Header.Length + fileId.Length);
-                                byte[] Part_ByteEncoded;
-                                byte[] Last_Part;
-                                Part_ByteEncoded = new byte[Port.WriteBufferSize - Header.Length - fileId.Length - 10];
-                                EncodedByteIndex = i * (Port.WriteBufferSize - Header.Length - fileId.Length - 10);
-                                Part_ByteEncodedIndex = (Port.WriteBufferSize - Header.Length - fileId.Length - 10);
-                                if (((ByteEncoded.Length - EncodedByteIndex) >= Part_ByteEncodedIndex))
-                                {
-                                    Array.ConstrainedCopy(ByteEncoded, EncodedByteIndex, Part_ByteEncoded, 0, Part_ByteEncodedIndex);
-                                    Part_ByteEncoded.CopyTo(BufferToSend, Header.Length + fileId.Length + 10);//!
-                                }
-                                else if (ByteEncoded.Length - EncodedByteIndex > 0)
-                                {
-                                    Last_Part = new byte [ByteEncoded.Length - i * Port.WriteBufferSize];
-                                    Array.ConstrainedCopy(ByteEncoded, EncodedByteIndex, Last_Part, 0, ByteEncoded.Length - i * Port.WriteBufferSize);
-                                    Last_Part.CopyTo(BufferToSend, Header.Length + fileId.Length + 10);//!
-                                }
-                               
+
+                                NumOfFrames.CopyTo(BufferToSend, Header.Length + fileId.Length + sizeLenght);
+
+                                FrameNumber = Encoding.Default.GetBytes((i+1).ToString());
+                                FrameNumber.CopyTo(BufferToSend, Header.Length + fileId.Length + sizeLenght + NumOfFrameLenght);
+
+                                Array.ConstrainedCopy(ByteEncoded, EncodedByteIndex, BufferToSend, InfoLen, Part_Len);
+
                                 Port.Write(BufferToSend, 0, BufferToSend.Length);
                             }
-                            
                         }
-
-
-                        
-                       
                     }
                     break;
                 #endregion
@@ -261,9 +269,7 @@ namespace ComForm
                     if (IsConnected())
                         Port.Write(Header, 0, Header.Length);
                     break;
-            }
-
-                                                                                                                                                  //Зачем такая конструкция?
+            }                                                                                                                                  //Зачем такая конструкция?
             Log.Invoke(new EventHandler(delegate
             {
                 Log.AppendText("sent frame " + type + "\n"); //всё записываем, мы же снобы
@@ -285,22 +291,20 @@ namespace ComForm
             }
         }
 
+
+        byte[] file_buffer;
+
         public void GetData(int typeId)
         {
             FrameType type = (FrameType)typeId;
-            //FrameType frametype = (FrameType)Enum.ToObject(typeof(FrameType), frametypeid);
-            int bytesToRead;
-            byte[] byteBuffer;
-            int i;
+
             byte[] ToDecode;
             byte[] Decoded;
-            //int parts;
-            //string parts_s;
-            //WriteLog(DirectionType.INCOMING, frametype);
-            Log.Invoke(new EventHandler(delegate
+
+            /*Log.Invoke(new EventHandler(delegate
             {
                 Log.AppendText("get frame " + type +"\n");
-            }));
+            }));*/
 
 
             switch (type)
@@ -334,71 +338,66 @@ namespace ComForm
                     #region FILE
                     if (IsConnected())
                     {
-                        //byte[] byteBuffer;
-
-                        //byte[] size = new byte[10];
-                        //Port.Read(size, 0, 10);
-                        //string size_s = Encoding.Default.GetString(size);
-
-                        //double ssize = Double.Parse(size_s); //размер файла //нужен ли он вообще /наверное, нужен
-
-                        //int n = Port.BytesToRead;
-                        //byteBuffer = new byte[n];
-                        //Port.Read(byteBuffer, 0, n);
-
-                        //Log.Invoke(new EventHandler(delegate
-                        //{
-                        //    Log.AppendText("(" + Port.PortName + ") : GetData: new file > " + byteBuffer.Length + " bytes\n");
-                        //}));
-
-                        //WriteData(null, FrameType.ACK);
-
-                        //Port.ReadByte();
                         byte fileId = (byte)Port.ReadByte();
                         string typeFile = TypeFileAnalysis(fileId);
-                        byte[] size;
-                        //byte[] NumOfFrames;
-                        string size_s;
-                        size = new byte[10];
-                        //for ( i = 0; i<size.Length; i++)
-                        //{
-                        //    size[i] = 0;
-                        //}
-                        Port.Read(size, 0, 10);
-                        size_s = Encoding.Unicode.GetString(size);
-                        //NumOfFrames = new byte[10];
-                        //for (i = 0; i < NumOfFrames.Length; i++)
-                        //{
-                        //    NumOfFrames[i] = 0;
-                        //}
-                        //Port.Read(NumOfFrames, 0, 10);
-                        //parts_s = Encoding.Unicode.GetString(NumOfFrames);
-                        //parts = int.Parse(parts_s);
-                        //MessageBox.Show(spd_s)
-                        //double ssize;
-                        //ssize = double.Parse(size_s);
-                        
-                        DialogResult result;
-                        result = MessageBox.Show("Файл. Размер: "+size_s+" Кбайт.\nПринять?", "Прием файла", MessageBoxButtons.YesNo);
-                        if (result == DialogResult.Yes)
+
+                        byte[] size = new byte[sizeLenght];
+                        Port.Read(size, 0, sizeLenght);
+                        int ssize = (int)Double.Parse(Encoding.Default.GetString(size));
+
+                        byte[] byte_NumOfFrames = new byte[NumOfFrameLenght];
+                        Port.Read(byte_NumOfFrames, 0, NumOfFrameLenght);
+                        int NumOfFrames = (int)Double.Parse(Encoding.Default.GetString(byte_NumOfFrames));
+
+                        byte[] byte_FrameNumber = new byte[NumOfFrameLenght];
+                        Port.Read(byte_FrameNumber, 0, NumOfFrameLenght);
+                        int FrameNumber = (int)Double.Parse(Encoding.Default.GetString(byte_FrameNumber));
+
+
+                        if (FrameNumber == 1)
                         {
-                            //Decoded = new byte[(int)Math.Ceiling((double)Port.BytesToRead * parts / 2)];
-                           
-                            //for (int j = 0; j <= parts; j++)
-                            //{
-                            bytesToRead = Port.BytesToRead;
-                                byteBuffer = new byte[bytesToRead];
-                                Port.Read(byteBuffer, 0, bytesToRead);
-                                Decoded = new byte[bytesToRead / 2];
-                                ToDecode = new byte[2];
-                                ;
-                                for (i = 0; i < bytesToRead / 2; i++)
+                            DialogResult result;
+                            double fileSize = Math.Round((double)ssize / 1024, 3);
+                            result = MessageBox.Show("Файл. Размер: " + fileSize.ToString() + " Кбайт.\nПринять?", "Прием файла", MessageBoxButtons.YesNo);
+                            if (result == DialogResult.Yes)
+                            {
+                                file_buffer = new byte[NumOfFrames*(Port.WriteBufferSize - 27)];
+                            }
+
+                            else
+                            {
+                                Display.Invoke(new EventHandler(delegate
                                 {
-                                    ToDecode[0] = byteBuffer[i * 2];
-                                    ToDecode[1] = byteBuffer[(i * 2) + 1];
-                                    Decoded[i] = Hamming.Decode(ToDecode);
-                                }
-                            //}
+                                    Display.AppendText(
+                                    "[" + DateTime.Now + "] : " + ": "
+                                    + "Вы не сохранили файл"
+                                    + "\r\n");
+                                    Display.ScrollToCaret();
+                                }));
+                            }
+                        }
+
+
+                        int n = Port.WriteBufferSize - InfoLen;
+                        byte[] newPart = new byte[n];
+                        Port.Read(newPart, 0, n);
+
+                        newPart.CopyTo(file_buffer, n * (FrameNumber-1));
+
+
+                        if (FrameNumber==NumOfFrames)
+                        {
+                            Decoded = new byte[ssize];
+                            ToDecode = new byte[2];
+
+                            for (int i = 0; i < ssize; i++)
+                            {
+                                ToDecode[0] = file_buffer[i * 2];
+                                ToDecode[1] = file_buffer[(i * 2) + 1];
+                                Decoded[i] = Hamming.Decode(ToDecode);
+                            }
+
+
                             SaveFileDialog saveFileDialog = new SaveFileDialog();
 
                             MainForm.Invoke(new EventHandler(delegate
@@ -407,7 +406,7 @@ namespace ComForm
                                 saveFileDialog.Filter = "TypeFile (*." + typeFile + ")|*." + typeFile + "|All files (*.*)|*.*";
                                 if (DialogResult.OK == saveFileDialog.ShowDialog())
                                 {
-                                    File.WriteAllBytes(saveFileDialog.FileName, Decoded);//!
+                                    File.WriteAllBytes(saveFileDialog.FileName, Decoded);
                                     WriteData(null, FrameType.ACK);
                                     Display.Invoke(new EventHandler(delegate
                                     {
@@ -432,20 +431,6 @@ namespace ComForm
                                 }
                             }));
                         }
-                        else
-                        {
-                            // MessageBox.Show("Отмена ");
-                            Display.Invoke(new EventHandler(delegate
-                            {
-                                Display.AppendText(
-                                "[" + DateTime.Now + "] : " + ": "
-                                + "Вы не сохранили файл"
-                                + "\r\n");
-                                Display.ScrollToCaret();
-                            }));
-                        }
-
-
                     }
                     else
                     {
