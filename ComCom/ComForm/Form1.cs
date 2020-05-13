@@ -16,68 +16,34 @@ namespace ComForm
     public partial class Form1 : Form
     {
         Connection com1 = new Connection();
-        //Connection com2 = new Connection();
         
         public Form1()
         {
             InitializeComponent();
             cb_PortNames.Items.AddRange(SerialPort.GetPortNames());
-            com1.b_SendFile = b_SendFile;
             com1.MainForm = this;
-            com1.Display = richTextBox1;
-            com1.TestLabel = label1;
+            com1.ProgressBar = progressBar1;
+            com1.b_ChooseFile = b_ChooseFile;
+            com1.b_Connection = b_Connection;
+            com1.b_OpenPort = b_OpenPort;
+            b_con.Enabled = false;
+            b_ChooseFile.Enabled = false;
+            b_Connection.Enabled = false;
+            richTextBox1.AppendText("Добро пожаловать!\nПеред началом работы выберите порт из списка и откройте его.\n\n");
         }
-
-        //private void b_open5_Click(object sender, EventArgs e)
-        //{
-        //    com1.Log = richTextBox1;
-        //    com1.setPortName("COM1"); //давать список для выбора из существующих?
-        //    com1.OpenPort();
-            
-        //    richTextBox1.AppendText(com1.Port.PortName + "  is opened: " + com1.Port.IsOpen + "\n");
-        //}
-
-        //private void b_open6_Click(object sender, EventArgs e)
-        //{
-        //    com2.Log = richTextBox1;
-        //    com2.setPortName("COM2");
-        //    com2.OpenPort();
-            
-        //    richTextBox1.AppendText(com2.Port.PortName + "  is opened: " + com2.Port.IsOpen + "\n");
-        //}
 
         /// <summary>
         /// Пишет в лог, есть ли соединение
         /// </summary>
         private void b_con_Click(object sender, EventArgs e)
         {
-            richTextBox1.AppendText(cb_PortNames.SelectedItem.ToString() + " is connected: " + com1.IsConnected() + "\n");
-        }
-
-
-
-        private void button1_Click(object sender, EventArgs e)
-        {
             if (com1.IsConnected())
             {
-                com1.WriteData("Hello world", Connection.FrameType.MSG);
+                richTextBox1.AppendText("[" + DateTime.Now + "]: " + cb_PortNames.SelectedItem.ToString() + ": Соединение установлено\n");
             }
             else
             {
-                richTextBox1.AppendText("error: no connection\n");
-            }
-            
-        }
-
-        private void button2_Click(object sender, EventArgs e)
-        {
-            if (com1.IsConnected())
-            {
-                com1.WriteData("filebytesbytesbytes", Connection.FrameType.FILE);
-            }
-            else
-            {
-                richTextBox1.AppendText("error: no connection\n");
+                richTextBox1.AppendText("[" + DateTime.Now + "]: " + cb_PortNames.SelectedItem.ToString() + ": Соединение отсутствует\n");
             }
         }
 
@@ -86,35 +52,107 @@ namespace ComForm
         /// </summary>
         private void b_OpenPort_Click(object sender, EventArgs e)
         {
-            com1.Log = richTextBox1;
-            com1.setPortName(cb_PortNames.SelectedItem.ToString()); //давать список для выбора из существующих?
-            com1.OpenPort();
+            if (cb_PortNames.SelectedItem != null)
+            {
+                com1.Log = richTextBox1;
 
-            richTextBox1.AppendText(com1.Port.PortName + "  is opened: " + com1.Port.IsOpen + "\n");
+                if (com1.Port.IsOpen)
+                {
+                    if (com1.ClosePort())
+                    {
+                        richTextBox1.AppendText("[" + DateTime.Now + "]: Порт " + com1.Port.PortName + " закрыт\n");
+                        b_con.Enabled = false;
+                        b_ChooseFile.Enabled = false;
+                        b_Connection.Enabled = false;
+                        cb_PortNames.Enabled = true;
+
+                        b_OpenPort.Text = "Открыть порт";
+                    }
+
+                }
+                else //открываем
+                {
+                    com1.setPortName(cb_PortNames.SelectedItem.ToString());
+                    
+                    if (com1.OpenPort())
+                    {
+                        richTextBox1.AppendText("[" + DateTime.Now + "]: Порт " + com1.Port.PortName + " открыт\n");
+                        b_con.Enabled = true;
+                        b_ChooseFile.Enabled = true;
+                        b_Connection.Enabled = true;
+                        cb_PortNames.Enabled = false;
+
+                        b_OpenPort.Text = "Закрыть порт";
+                    }
+                    
+                }
+
+            }
+            else
+            {
+                MessageBox.Show("Порт не выбран!", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
         }
 
         private void b_ChooseFile_Click(object sender, EventArgs e)
         {
             OpenFileDialog openFileDialog = new OpenFileDialog();
-
-            if (openFileDialog.ShowDialog() == DialogResult.OK)
+            if (com1.IsConnected())
             {
-                com1.WriteData(openFileDialog.FileName, Connection.FrameType.FILE);
-                //if (_com1.loading.i == 2)
-                //{
-                //    richTextBox1.AppendText("[" + DateTime.Now + "] Вы: файл отправлен" + "\n");
-                //}
-                richTextBox1.ScrollToCaret();
-                //if (_com1.loading.i == 3)
-                //{
-                //    richTextBox2.AppendText("Передача файла отменена. \n");
-                //}
+                if (openFileDialog.ShowDialog() == DialogResult.OK)
+                {
+                    com1.WriteData(openFileDialog.FileName, Connection.FrameType.FILEOK);
+                    richTextBox1.ScrollToCaret();
+                }
+            }
+            else
+            {
+                MessageBox.Show("Соединение отсутствует!", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
-        private void b_SendFile_Click(object sender, EventArgs e)
+        private void Form1_FormClosing(Object sender, FormClosingEventArgs e)
         {
-            b_SendFile.DialogResult = DialogResult.OK;
+            com1.ClosePort();
+        }
+
+        private void b_About_Click(object sender, EventArgs e)
+        {
+            MessageBox.Show("Программа реализует взаимодействие 2-х ПК, соединенных через интерфейс RS-232C,\n" +
+                            "с функцией передачи файла и возможностью докачки после восстановления прерванной связи.\n\n" +
+                            "Программу разработали студенты МГТУ им. Н.Э.Баумана группы ИУ5-63:\n\n" +
+                            "Волков А.С. (прикладной уровень)\n" +
+                            "Королев С.В. (канальный уровень)\n" +
+                            "Беспалова У.А. (физический уровень)",
+                            "О программе",
+                            MessageBoxButtons.OK,
+                            MessageBoxIcon.Information);
+        }
+
+        private void b_Connection_Click(object sender, EventArgs e)
+        {
+            if (!com1.Port.DtrEnable) 
+            { //если выключен
+                com1.Port.DtrEnable = true;
+                b_Connection.Text = "Разорвать соединение";
+
+                if (com1.IsConnected())
+                {
+                    richTextBox1.AppendText("[" + DateTime.Now + "]: Соединение успешно установлено!\n");
+                }
+                else
+                {
+                    richTextBox1.AppendText("[" + DateTime.Now + "]: Порт " + com1.Port.PortName + " готов к передаче данных, требуется подключение второго порта\n");
+                }
+            }
+            else
+            {
+                com1.Port.DtrEnable = false;
+                b_Connection.Text = " соединение";
+                richTextBox1.AppendText("[" + DateTime.Now + "]: Соединение было разорвано\n");
+            }
+
+            
         }
     }
 }

@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
-using System.Threading.Tasks;
+using System.Threading;
 using System.IO;
 using System.IO.Ports;
 using System.Windows.Forms;
@@ -11,8 +11,9 @@ namespace ComForm
 {
     class Connection
     {
+        int SuccessfulFrameNumber = 0;
         SerialPort _Port = new SerialPort();
-        public SerialPort Port 
+        public SerialPort Port
         {
             get
             {
@@ -35,16 +36,16 @@ namespace ComForm
 
             if (Port.IsOpen)
             {
-                Log.AppendText("port " + name + ": you can't change port name while it is opened\n");
+                Log.AppendText("[" + DateTime.Now + "] Нельзя менять имя порта, когда он открыт\n");
                 return false;
             }
-            
+
             if (PortList.Contains(name))
             {
                 Port.PortName = name;
                 return true;
             }
-            Log.AppendText("port " + name + " not found\n");  //нет такого порта
+            Log.AppendText("[" + DateTime.Now + "] Порт" + name + " не найден\n");  //нет такого порта
             return false;
         }
 
@@ -53,27 +54,26 @@ namespace ComForm
             try
             {
                 Port.Open();
-                Port.DtrEnable = true;
                 InitializeHandlers();
-
+                
                 return true;
             }
 
-            catch (System.IO.IOException) 
+            catch (System.IO.IOException)
             {
-                Log.AppendText("port " + Port.PortName + " not found\n");
+                Log.AppendText("[" + DateTime.Now + "] Порт " + Port.PortName + " не найден\n");
                 return false;
             }
 
             catch (System.InvalidOperationException) //открыт в этом приложении
             {
-                Log.AppendText("port " + Port.PortName + "  is already opened\n");
+                Log.AppendText("[" + DateTime.Now + "] Порт " + Port.PortName + "  уже открыт\n");
                 return false;
             }
 
             catch (System.UnauthorizedAccessException) //уже открыт в другом приложении/другим окном
             {
-                Log.AppendText("port " + Port.PortName + "  is already used\n");
+                Log.AppendText("[" + DateTime.Now + "] Порт " + Port.PortName + "  уже используется\n");
                 return false;
             }
         }
@@ -82,7 +82,7 @@ namespace ComForm
         {
             if (!Port.IsOpen)
             {
-                Log.AppendText("fail: port is already closed\n");
+                Log.AppendText("[" + DateTime.Now + "] Порт " + Port.PortName + "  уже закрыт\n");
                 return false;
             }
             Port.Close();
@@ -113,12 +113,14 @@ namespace ComForm
             ACK,
             MSG,
             RET_MSG,
-            RET_FILE,
+            ERR_FILE,
             FILE,
+            FRAME,
+            FILEOK,
         }
 
-
-
+        public static String FilePath;
+        public bool BreakConnection = false;
         public void WriteData(string input, FrameType type)
         {
             byte[] Header = { STARTBYTE, (byte)type };
@@ -127,16 +129,21 @@ namespace ComForm
             byte[] size;
             byte[] NumOfFrames;
             byte[] FrameNumber;
-  
+
             byte[] BufferToSend;
             byte[] Telegram;
-
+            string Telegram_s;
+            string size_s;
             byte[] ByteToEncode;
             byte[] ByteEncoded;
 
 
             switch (type)
             {
+                case FrameType.ERR_FILE:
+
+
+                    break;
                 case FrameType.MSG:
                     #region MSG
                     if (IsConnected())
@@ -154,16 +161,108 @@ namespace ComForm
                     break;
                 #endregion
 
+                case FrameType.ACK:
+                    #region ACK
+                    if (IsConnected())
+                    {
+                        // Telegram[] = Coding(input);
+                        Telegram = Encoding.Default.GetBytes(input); //потом это кыш
+
+                        BufferToSend = new byte[Header.Length + Telegram.Length]; //буфер для отправки = заголовок+сообщение
+                        Header.CopyTo(BufferToSend, 0);
+                        Telegram.CopyTo(BufferToSend, Header.Length);
+
+                        Port.Write(BufferToSend, 0, BufferToSend.Length);
+                        Telegram_s = Encoding.Default.GetString(Telegram);
+                        //Log.AppendText("[" + DateTime.Now + "] Отправлено ACK согласие на принятие файла: " + Telegram_s + "\n");
+                    }
+                    break;
+                #endregion
+
+                case FrameType.FILEOK:
+                    #region FILEOK
+                    if (IsConnected())
+                    {
+                        ByteToEncode = File.ReadAllBytes(input);
+                        FilePath = input;
+                        size = new byte[sizeLenght];
+                        size = Encoding.Default.GetBytes(((double)ByteToEncode.Length).ToString()); //нужны байты
+                        //Telegram = Encoding.Default.GetBytes(size); //потом это кыш
+
+                        BufferToSend = new byte[Header.Length + size.Length]; //буфер для отправки = заголовок+сообщение
+                        Header.CopyTo(BufferToSend, 0);
+                        size.CopyTo(BufferToSend, Header.Length);
+
+                        Port.Write(BufferToSend, 0, BufferToSend.Length);
+                        size_s = Encoding.Default.GetString(size);
+                        Log.AppendText("[" + DateTime.Now + "] Отправлена информация о размере файла: " + size_s + " байт\n");
+                        //SuccessfulFrameNumber = int.Parse(Telegram_s);
+                    }
+                    break;
+                #endregion
+
+                case FrameType.FRAME:
+                    #region FRAME
+                    if (IsConnected())
+                    {
+                        // Telegram[] = Coding(input); 
+                        Telegram = Encoding.Default.GetBytes(input); //потом это кыш
+                        BufferToSend = new byte[Header.Length + Telegram.Length]; //буфер для отправки = заголовок+сообщение
+                        Header.CopyTo(BufferToSend, 0);
+                        Telegram.CopyTo(BufferToSend, Header.Length);
+
+                        Port.Write(BufferToSend, 0, BufferToSend.Length);
+                        Telegram_s = Encoding.Default.GetString(Telegram);
+                        //Log.AppendText("[" + DateTime.Now + "] Получен кадр " + Telegram_s + " .Отправлено подтверждение о получении\n");
+                        //SuccessfulFrameNumber = int.Parse(Telegram_s);
+                    }
+                    else
+                    {
+                        Log.Invoke(new EventHandler(delegate
+                        {
+                            Log.AppendText("[" + DateTime.Now + "]: Передача файла нарушена.");
+                        }));
+                        //MessageBox.Show("Соединение прервано. Передача нарушена.4");
+                        BreakConnection = true;
+                        break;
+                    }
+                    break;
+                #endregion
 
                 case FrameType.FILE:
                     #region FILE
+                    int i;
+                    int parts = 0;
+                    int EncodedByteIndex;
+                    int Part_ByteEncodedIndex;
+                    ByteEncoded = new byte[0];
+                    size = new byte[0];
+                    NumOfFrames = new byte[0];
+
+
                     if (IsConnected())
                     {
-                        ByteToEncode = File.ReadAllBytes(@input);
 
+                        ByteToEncode = File.ReadAllBytes(@FilePath);
+                        //b_ChooseFile.Invoke(new EventHandler(delegate
+                        //{
+                        //    b_ChooseFile.Enabled = false;
+                        //}));
+                        b_ChooseFile.Invoke(new EventHandler(delegate
+                        {
+                            b_ChooseFile.Enabled = false;
+                        }));
+                        b_OpenPort.Invoke(new EventHandler(delegate
+                        {
+                            b_OpenPort.Enabled = false;
+                        }));
+                        b_Connection.Invoke(new EventHandler(delegate
+                        {
+                            b_Connection.Enabled = false;
+                        }));
                         size = new byte[sizeLenght];
                         size = Encoding.Default.GetBytes(((double)ByteToEncode.Length).ToString()); //нужны байты
-
+                        //WriteData(Encoding.Default.GetString(size), FrameType.FILEOK);
                         NumOfFrames = new byte[NumOfFrameLenght];
                         FrameNumber = new byte[NumOfFrameLenght];
 
@@ -172,7 +271,7 @@ namespace ComForm
 
 
                         ByteEncoded = new byte[ByteToEncode.Length * 2];
-                        for (int i = 0; i < ByteToEncode.Length; i++)
+                        for (i = 0; i < ByteToEncode.Length; i++)
                         {
                             Hamming.HammingEncode74(ByteToEncode[i]).CopyTo(ByteEncoded, i * 2);
                         }
@@ -196,7 +295,7 @@ namespace ComForm
                             while (!flag)
                             {
 
-                                if (MessageBox.Show("Send?", "Test", MessageBoxButtons.YesNo) == DialogResult.Yes)
+                                if (MessageBox.Show("Отправить?", "Файл", MessageBoxButtons.YesNo) == DialogResult.Yes)
                                 {
 
                                     flag = true;
@@ -220,13 +319,18 @@ namespace ComForm
                         }
                         else
                         {
-                            int EncodedByteIndex;
-                            int Part_ByteEncodedIndex;
-                            
-                            int parts = (int)Math.Ceiling((double)ByteEncoded.Length / (double)(Port.WriteBufferSize - InfoLen));
+                            //EncodedByteIndex;
+                            //Part_ByteEncodedIndex;
+
+                            parts = (int)Math.Ceiling((double)ByteEncoded.Length / (double)(Port.WriteBufferSize - InfoLen));
+                            ProgressBar.Invoke(new EventHandler(delegate
+                            {
+                                ProgressBar.Visible = true;
+                                ProgressBar.Maximum = parts;
+                            }));
                             NumOfFrames = Encoding.Default.GetBytes(parts.ToString());
 
-                            for (int i = 0; i < parts; i++)
+                            for (i = 0; i < parts; i++)
                             {
                                 EncodedByteIndex = i * (Port.WriteBufferSize - InfoLen);
                                 Part_ByteEncodedIndex = (Port.WriteBufferSize - InfoLen);
@@ -253,14 +357,155 @@ namespace ComForm
 
                                 NumOfFrames.CopyTo(BufferToSend, Header.Length + fileId.Length + sizeLenght);
 
-                                FrameNumber = Encoding.Default.GetBytes((i+1).ToString());
+                                FrameNumber = Encoding.Default.GetBytes((i + 1).ToString());
                                 FrameNumber.CopyTo(BufferToSend, Header.Length + fileId.Length + sizeLenght + NumOfFrameLenght);
-
+                                
                                 Array.ConstrainedCopy(ByteEncoded, EncodedByteIndex, BufferToSend, InfoLen, Part_Len);
 
-                                Port.Write(BufferToSend, 0, BufferToSend.Length);
+                                //Log.AppendText("[" + DateTime.Now + "]: Отправляется фрейм: " + (SuccessfulFrameNumber + 1).ToString() + "\n");
+                                if (IsConnected())
+                                {
+                                    Port.Write(BufferToSend, 0, BufferToSend.Length);
+                                }
+                                Log.Invoke(new EventHandler(delegate
+                                {
+                                    Log.AppendText("[" + DateTime.Now + "]: Отправка кадра " + (i + 1).ToString() + "\n");
+                                    Log.ScrollToCaret();
+                                }));
+                                if (ProgressBar.Value != parts)
+                                {
+                                    ProgressBar.Invoke(new EventHandler(delegate
+                                    {
+                                        ProgressBar.Value++;
+                                    }));
+                                }
+                                
+                                byte[] ByteCheck = new byte[1];
+
+                                if (i > 0 && IsConnected())
+                                {
+                                    //Thread.Sleep(10);
+                                    int WaitTime = 0;
+                                    try
+                                    {
+                                        Port.Read(ByteCheck, 0, 1);
+                                    }
+                                    catch (Exception e)
+                                    {
+                                        Log.AppendText(e.Message);
+                                        break;
+                                    }
+
+                                    while (ByteCheck[0] != STARTBYTE)
+                                    {
+                                        if (WaitTime <= 100)
+                                        {
+                                            Thread.Sleep(10);
+                                            WaitTime += 10;
+                                            Port.Read(ByteCheck, 0, 1);
+                                        }
+                                        else
+                                        {
+                                            MessageBox.Show("Передача файла прервана");
+                                            break;
+                                        }
+
+                                    }
+                                    if (IsConnected()) { continue;}
+                                    Port.Read(ByteCheck, 0, 1);
+                                    if (ByteCheck[0] == (int)FrameType.FRAME)
+                                    {
+                                        int n = FrameNumber.Length;//Port.BytesToRead;
+                                        byte[] msgByteBuffer = new byte[n];
+
+                                        Port.Read(msgByteBuffer, 0, n); //считываем сообщение
+                                        string Message = Encoding.Default.GetString(msgByteBuffer);
+                                        //Log.Invoke(new EventHandler(delegate
+                                        //{
+                                        //    Log.AppendText("[" + DateTime.Now + "] Получено подтверждение об успешной доставке кадра " + Message + "\n");
+                                        //}));
+                                        SuccessfulFrameNumber = int.Parse(Message);
+                                    }
+                                    
+                                    if (i == SuccessfulFrameNumber)
+                                    {
+                                        continue;
+                                    }
+
+
+                                    //if (i != SuccessfulFrameNumber)
+                                    //{
+
+                                    //    MessageBox.Show("Передача файла нарушена.1");
+                                    //    break;
+                                    //}
+                                }
+                                if (!IsConnected())
+                                {
+                                    Log.Invoke(new EventHandler(delegate
+                                    {
+                                        Log.AppendText("[" + DateTime.Now + "]: Передача файла нарушена\n");
+                                    }));
+                                    DialogResult result;
+                                    while (!IsConnected())
+                                    {
+                                        result = MessageBox.Show("Соединение прервано. Передача нарушена.\n"
+                                        + "Восстановите соединение и нажмите ОК для докачки файла.\n"
+                                        + "Иначе нажмите ОТМЕНА.",
+                                        "Ошибка",
+                                        MessageBoxButtons.OKCancel,
+                                        MessageBoxIcon.Error);
+                                        if (result == DialogResult.Cancel)
+                                        {
+                                            Log.Invoke(new EventHandler(delegate
+                                            {
+                                                Log.AppendText("[" + DateTime.Now + "]: Передача файла отменена\n");
+                                            }));
+                                            ProgressBar.Invoke(new EventHandler(delegate
+                                            {
+                                                ProgressBar.Value = 0;
+                                            }));
+                                            return;
+                                        }
+                                    }
+                                    //BreakConnection = true;
+                                    i = SuccessfulFrameNumber - 1;
+                                    //break;
+                                }
+
                             }
+                            Log.Invoke(new EventHandler(delegate
+                            {
+                                Log.AppendText("[" + DateTime.Now + "]: Файл успешно передан\n");
+                            }));
+                            ProgressBar.Invoke(new EventHandler(delegate
+                            {
+                                ProgressBar.Value = 0;
+                            }));
+                            b_ChooseFile.Invoke(new EventHandler(delegate
+                            {
+                                b_ChooseFile.Enabled = true;
+                            }));
+                            b_OpenPort.Invoke(new EventHandler(delegate
+                            {
+                                b_OpenPort.Enabled = true;
+                            }));
+                            b_Connection.Invoke(new EventHandler(delegate
+                            {
+                                b_Connection.Enabled = true;
+                            }));
                         }
+                    }
+                    else
+                    {
+                        Log.Invoke(new EventHandler(delegate
+                        {
+                            Log.AppendText("[" + DateTime.Now + "]: Передача файла нарушена.\n" + "Последний успешный фрейм: " + SuccessfulFrameNumber.ToString());
+                        }));
+                        //MessageBox.Show("Соединение прервано. Передача нарушена.3");
+
+                        BreakConnection = true;
+                        break;
                     }
                     break;
                 #endregion
@@ -270,10 +515,10 @@ namespace ComForm
                         Port.Write(Header, 0, Header.Length);
                     break;
             }                                                                                                                                  //Зачем такая конструкция?
-            Log.Invoke(new EventHandler(delegate
-            {
-                Log.AppendText("sent frame " + type + "\n"); //всё записываем, мы же снобы
-            }));
+            //Log.Invoke(new EventHandler(delegate
+            //{
+            //    Log.AppendText("sent frame " + type + "\n"); //всё записываем, мы же снобы
+            //}));
         }
 
 
@@ -315,12 +560,12 @@ namespace ComForm
                     {
                         int n = Port.BytesToRead;
                         byte[] msgByteBuffer = new byte[n];
-                        
+
                         Port.Read(msgByteBuffer, 0, n); //считываем сообщение
                         string Message = Encoding.Default.GetString(msgByteBuffer);
                         Log.Invoke(new EventHandler(delegate
                         {
-                            Log.AppendText("(" + Port.PortName + ") GetData: new message > " + Message + "\n");
+                            Log.AppendText("(" + Port.PortName + ") GetData: новое сообщение > " + Message + "\n");
                         }));
 
                         WriteData(null, FrameType.ACK);
@@ -331,10 +576,62 @@ namespace ComForm
                     }
                     break;
                 #endregion
+                case FrameType.FILEOK:
+                    #region FILEOK
+                    if (IsConnected())
+                    {
+                        int n = Port.BytesToRead;
+                        byte[] msgByteBuffer = new byte[n];
 
+                        Port.Read(msgByteBuffer, 0, n); //считываем сообщение
+                        string Message = Encoding.Default.GetString(msgByteBuffer);
+                        Log.Invoke(new EventHandler(delegate
+                        {
+                            Log.AppendText("[" + DateTime.Now + "]: Получено предложение на прием файла размером: " + Message + " байт\n");
+                        }));
+                        //SuccessfulFrameNumber = int.Parse(Message);
+                        int Message_num = int.Parse(Message);
+                        double fileSize = Math.Round((double)Message_num / 1024, 3);
+                        if (MessageBox.Show("Получено предложение на прием файла. Размер: " + fileSize.ToString() + " Кбайт.\nПринять?", "Прием файла", MessageBoxButtons.YesNo) == DialogResult.Yes)
+                        {
+                            WriteData("OK", FrameType.ACK);
+                            
+                            b_ChooseFile.Invoke(new EventHandler(delegate
+                            {
+                                b_ChooseFile.Enabled = false;
+                            }));
+                            b_OpenPort.Invoke(new EventHandler(delegate
+                            {
+                                b_OpenPort.Enabled = false;
+                            }));
+                            b_Connection.Invoke(new EventHandler(delegate
+                            {
+                                b_Connection.Enabled = false;
+                            }));
+                        }
+
+                    }
+                    else
+                    {
+                        MessageBox.Show("Нет соединения!", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    }
+                    break;
+                #endregion
                 
                 case FrameType.FILE:
-
+                    while ((!IsConnected()) && (BreakConnection))
+                    {
+                        Port.DiscardInBuffer();
+                        Log.Invoke(new EventHandler(delegate
+                        {
+                            Log.AppendText(
+                            "[" + DateTime.Now + "]: "
+                            + "Ожидание файла..."
+                            + "\r\n");
+                            Log.ScrollToCaret();
+                            Thread.Sleep(1000);
+                        }));
+                    }
                     #region FILE
                     if (IsConnected())
                     {
@@ -349,6 +646,12 @@ namespace ComForm
                         Port.Read(byte_NumOfFrames, 0, NumOfFrameLenght);
                         int NumOfFrames = (int)Double.Parse(Encoding.Default.GetString(byte_NumOfFrames));
 
+                        ProgressBar.Invoke(new EventHandler(delegate
+                        {
+                            ProgressBar.Visible = true;
+                            ProgressBar.Maximum = NumOfFrames;
+                        }));
+
                         byte[] byte_FrameNumber = new byte[NumOfFrameLenght];
                         Port.Read(byte_FrameNumber, 0, NumOfFrameLenght);
                         int FrameNumber = (int)Double.Parse(Encoding.Default.GetString(byte_FrameNumber));
@@ -356,36 +659,35 @@ namespace ComForm
 
                         if (FrameNumber == 1)
                         {
-                            DialogResult result;
-                            double fileSize = Math.Round((double)ssize / 1024, 3);
-                            result = MessageBox.Show("Файл. Размер: " + fileSize.ToString() + " Кбайт.\nПринять?", "Прием файла", MessageBoxButtons.YesNo);
-                            if (result == DialogResult.Yes)
-                            {
-                                file_buffer = new byte[NumOfFrames*(Port.WriteBufferSize - 27)];
-                            }
-
-                            else
-                            {
-                                Display.Invoke(new EventHandler(delegate
-                                {
-                                    Display.AppendText(
-                                    "[" + DateTime.Now + "] : " + ": "
-                                    + "Вы не сохранили файл"
-                                    + "\r\n");
-                                    Display.ScrollToCaret();
-                                }));
-                            }
+                           
+                            file_buffer = new byte[NumOfFrames * (Port.WriteBufferSize - 27)];
+                           
                         }
 
-
+                        Log.Invoke(new EventHandler(delegate
+                        {
+                            Log.AppendText(
+                            "[" + DateTime.Now + "]: "
+                            + "Загружен кадр "
+                            + FrameNumber.ToString()
+                            + "\r\n");
+                            Log.ScrollToCaret();
+                        }));
                         int n = Port.WriteBufferSize - InfoLen;
                         byte[] newPart = new byte[n];
                         Port.Read(newPart, 0, n);
 
-                        newPart.CopyTo(file_buffer, n * (FrameNumber-1));
+                        newPart.CopyTo(file_buffer, n * (FrameNumber - 1));
+                        if (ProgressBar.Value != FrameNumber)
+                        {
+                            ProgressBar.Invoke(new EventHandler(delegate
+                            {
+                                ProgressBar.Value++;
+                            }));
+                        }
+                        WriteData(FrameNumber.ToString(), FrameType.FRAME);
 
-
-                        if (FrameNumber==NumOfFrames)
+                        if (FrameNumber == NumOfFrames)
                         {
                             Decoded = new byte[ssize];
                             ToDecode = new byte[2];
@@ -396,7 +698,17 @@ namespace ComForm
                                 ToDecode[1] = file_buffer[(i * 2) + 1];
                                 Decoded[i] = Hamming.Decode(ToDecode);
                             }
-
+                            Log.Invoke(new EventHandler(delegate
+                            {
+                                Log.AppendText(
+                                "[" + DateTime.Now + "]: "
+                                + "Файл успешно получен"
+                                + "\r\n");
+                                Log.ScrollToCaret();
+                                b_ChooseFile.Enabled = true;
+                                b_Connection.Enabled = true;
+                                b_OpenPort.Enabled = true;
+                            }));
 
                             SaveFileDialog saveFileDialog = new SaveFileDialog();
 
@@ -407,71 +719,66 @@ namespace ComForm
                                 if (DialogResult.OK == saveFileDialog.ShowDialog())
                                 {
                                     File.WriteAllBytes(saveFileDialog.FileName, Decoded);
-                                    WriteData(null, FrameType.ACK);
-                                    Display.Invoke(new EventHandler(delegate
+                                    //WriteData(null, FrameType.ACK);
+                                    Log.Invoke(new EventHandler(delegate
                                     {
-                                        Display.AppendText(
-                                        "[" + DateTime.Now + "] : "
-                                        + "Файл успешно получен"
-                                        + "\r\n");
-                                        Display.ScrollToCaret();
+                                        Log.AppendText(
+                                        "[" + DateTime.Now + "]: "
+                                        + "Файл сохранен"
+                                        + "\r\n"); 
+                                        Log.ScrollToCaret();
+                                        b_ChooseFile.Enabled = true;
+                                        b_Connection.Enabled = true;
+                                        b_OpenPort.Enabled = true;
                                     }));
                                 }
                                 else
                                 {
                                     // MessageBox.Show("Отмена ");
-                                    Display.Invoke(new EventHandler(delegate
+                                    Log.Invoke(new EventHandler(delegate
                                     {
-                                        Display.AppendText(
-                                        "[" + DateTime.Now + "] : " + ": "
+                                        Log.AppendText(
+                                        "[" + DateTime.Now + "]: "
                                         + "Вы не сохранили файл"
                                         + "\r\n");
-                                        Display.ScrollToCaret();
+                                        Log.ScrollToCaret();
                                     }));
+                                    
                                 }
                             }));
+                            ProgressBar.Invoke(new EventHandler(delegate
+                            {
+                                ProgressBar.Value = 0;
+                            }));
                         }
+
                     }
                     else
                     {
-                        WriteData(null, FrameType.RET_FILE);
+                        WriteData(null, FrameType.ERR_FILE);
                     }
 
                     break;
                 #endregion
                 //======================================================
 
-
-
                 case FrameType.ACK:
                     #region ACK
+                    WriteData(FilePath, FrameType.FILE);
                     break;
                 #endregion
 
                 case FrameType.RET_MSG:
                     #region RET_MSG
-                    Log.AppendText("Message error! No connection\n");
+                    Log.AppendText("Ошибка отправки! Нет соединения\n");
                     break;
                 #endregion
 
-                case FrameType.RET_FILE:
+                case FrameType.ERR_FILE:
                     #region RET_FILE
-                    Log.AppendText("File error! No connection\n");
+                    Log.AppendText("Ошибка отправки файла! Нет соединения\n");
                     break;
                     #endregion
-            }
-        }
-
-        private Button _b_SendFile;
-        public Button b_SendFile
-        {
-            get
-            {
-                return _b_SendFile;
-            }
-            set
-            {
-                _b_SendFile = value;
             }
         }
 
@@ -488,19 +795,57 @@ namespace ComForm
             }
         }
 
-        private Label _TestLabel;
-        public Label TestLabel
+        private Button _b_ChooseFile; 
+        public Button b_ChooseFile
         {
             get
             {
-                return _TestLabel;
+                return _b_ChooseFile;
             }
             set
             {
-                _TestLabel = value;
+                _b_ChooseFile = value;
             }
         }
 
+        private Button _b_Connection;
+        public Button b_Connection
+        {
+            get
+            {
+                return _b_Connection;
+            }
+            set
+            {
+                _b_Connection = value;
+            }
+        }
+
+        private Button _b_OpenPort;
+        public Button b_OpenPort
+        {
+            get
+            {
+                return _b_OpenPort;
+            }
+            set
+            {
+                _b_OpenPort = value;
+            }
+        }
+
+        private ProgressBar _ProgressBar;
+        public ProgressBar ProgressBar
+        {
+            get
+            {
+                return _ProgressBar;
+            }
+            set
+            {
+                _ProgressBar = value;
+            }
+        }
         private Form _mainForm;
         public Form MainForm
         {
@@ -514,21 +859,7 @@ namespace ComForm
             }
         }
 
-        private RichTextBox _Display;
-        /// <summary>
-        /// Окно вывода сообщений
-        /// </summary>
-        public RichTextBox Display
-        {
-            get
-            {
-                return _Display;
-            }
-            set
-            {
-                _Display = value;
-            }
-        }
+        
         private string TypeFileAnalysis(byte fileId)
         {
             switch (fileId)
