@@ -256,10 +256,6 @@ namespace ComForm
                         {
                             b_OpenPort.Enabled = false;
                         }));
-                        b_Connection.Invoke(new EventHandler(delegate
-                        {
-                            b_Connection.Enabled = false;
-                        }));
                         size = new byte[sizeLenght];
                         size = Encoding.Default.GetBytes(((double)ByteToEncode.Length).ToString()); //нужны байты
                         //WriteData(Encoding.Default.GetString(size), FrameType.FILEOK);
@@ -490,10 +486,7 @@ namespace ComForm
                             {
                                 b_OpenPort.Enabled = true;
                             }));
-                            b_Connection.Invoke(new EventHandler(delegate
-                            {
-                                b_Connection.Enabled = true;
-                            }));
+
                         }
                     }
                     else
@@ -604,10 +597,7 @@ namespace ComForm
                             {
                                 b_OpenPort.Enabled = false;
                             }));
-                            b_Connection.Invoke(new EventHandler(delegate
-                            {
-                                b_Connection.Enabled = false;
-                            }));
+
                         }
 
                     }
@@ -706,7 +696,6 @@ namespace ComForm
                                 + "\r\n");
                                 Log.ScrollToCaret();
                                 b_ChooseFile.Enabled = true;
-                                b_Connection.Enabled = true;
                                 b_OpenPort.Enabled = true;
                             }));
 
@@ -728,7 +717,6 @@ namespace ComForm
                                         + "\r\n"); 
                                         Log.ScrollToCaret();
                                         b_ChooseFile.Enabled = true;
-                                        b_Connection.Enabled = true;
                                         b_OpenPort.Enabled = true;
                                     }));
                                 }
